@@ -11261,6 +11261,33 @@ void ggml_compute_forward_gated_delta_net(
 }
 
 
+void ggml_compute_forward_sinkhorn_2x2(const struct ggml_compute_params * params, struct ggml_tensor * dst) {
+    const ggml_tensor * src = dst->src[0];
+    const int n_iters = ggml_get_op_params_i32(dst, 0);
+    auto softplus = [](float x) { return x > 20.0f ? x : log1pf(expf(x)); };
+    auto normalize = [&](float & x, float & y) {
+        const float delta = x - y;
+        x = -softplus(-delta);
+        y = -softplus(delta);
+    };
+
+    for (int64_t row = params->ith; row < src->ne[1]; row += params->nth) {
+        const float * logits = (const float *) ((const char *) src->data + row*src->nb[1]);
+        float * weights = (float *) ((char *) dst->data + row*dst->nb[1]);
+        float a = logits[0], b = logits[1], c = logits[2], d = logits[3];
+        for (int i = 0; i < n_iters; ++i) {
+            normalize(a, b);
+            normalize(c, d);
+            normalize(a, c);
+            normalize(b, d);
+        }
+        weights[0] = expf(a);
+        weights[1] = expf(b);
+        weights[2] = expf(c);
+        weights[3] = expf(d);
+    }
+}
+
 // ggml_compute_forward_dsv4_hc_comb
 
 static void ggml_dsv4_hc_comb_norm_cols(float * comb, float eps) {

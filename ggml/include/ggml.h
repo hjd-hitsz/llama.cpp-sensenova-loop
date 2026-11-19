@@ -429,6 +429,8 @@ extern "C" {
 
         GGML_OP_GLU,
 
+        GGML_OP_SINKHORN_2X2,
+
         GGML_OP_COUNT,
     };
 
@@ -2497,6 +2499,12 @@ extern "C" {
             struct ggml_tensor  * residual,
             struct ggml_tensor  * post,
             struct ggml_tensor  * comb);
+
+    // Each row [a, b, c, d] is a row-major 2x2 matrix of log weights. Normalize rows then columns in log space and return the weights.
+    GGML_API struct ggml_tensor * ggml_sinkhorn_2x2(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * logits,
+            int                   n_iters);
 
     // top-k sparse attention mask: keep the mask cells of the live picks and the extra cells, set the rest to -inf
     //

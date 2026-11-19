@@ -94,6 +94,45 @@ static __device__ __forceinline__ float op_softplus(float x) {
     return (x > 20.0f) ? x : log1pf(expf(x));
 }
 
+static __device__ __forceinline__ void sinkhorn_normalize_pair(float & x, float & y) {
+    const float delta = x - y;
+    x = -op_softplus(-delta);
+    y = -op_softplus(delta);
+}
+
+static __global__ void sinkhorn_2x2_f32(const float * logits, float * weights, int64_t n_rows, size_t src_stride, int n_iters) {
+    ggml_cuda_pdl_lc();
+    const int64_t row = (int64_t) blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= n_rows) {
+        return;
+    }
+
+    const float * src = logits + row*src_stride;
+    ggml_cuda_pdl_sync();
+    float a = src[0], b = src[1], c = src[2], d = src[3];
+    for (int i = 0; i < n_iters; ++i) {
+        sinkhorn_normalize_pair(a, b);
+        sinkhorn_normalize_pair(c, d);
+        sinkhorn_normalize_pair(a, c);
+        sinkhorn_normalize_pair(b, d);
+    }
+    float * dst = weights + 4*row;
+    dst[0] = expf(a);
+    dst[1] = expf(b);
+    dst[2] = expf(c);
+    dst[3] = expf(d);
+}
+
+void ggml_cuda_op_sinkhorn_2x2(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    const ggml_tensor * src = dst->src[0];
+    const int block_size = 128;
+    const int64_t n_rows = src->ne[1];
+    const dim3 grid_size((n_rows + block_size - 1) / block_size);
+    const ggml_cuda_kernel_launch_params launch_params = {grid_size, block_size, 0, ctx.stream()};
+    ggml_cuda_kernel_launch(sinkhorn_2x2_f32, launch_params, (const float *) src->data, (float *) dst->data,
+            n_rows, src->nb[1] / sizeof(float), ggml_get_op_params_i32(dst, 0));
+}
+
 static __device__ __forceinline__ float op_elu(float x) {
     return (x > 0.f) ? x : expm1f(x);
 }

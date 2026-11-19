@@ -1112,9 +1112,10 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "OPT_STEP_SGD",
 
     "GLU",
+    "SINKHORN_2X2",
 };
 
-static_assert(GGML_OP_COUNT == 99, "GGML_OP_COUNT != 99");
+static_assert(GGML_OP_COUNT == 100, "GGML_OP_COUNT != 100");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1225,9 +1226,10 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "sgd(x)",
 
     "glu(x)",
+    "sinkhorn_2x2(x)",
 };
 
-static_assert(GGML_OP_COUNT == 99, "GGML_OP_COUNT != 99");
+static_assert(GGML_OP_COUNT == 100, "GGML_OP_COUNT != 100");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -6388,6 +6390,21 @@ struct ggml_tensor * ggml_lightning_indexer(
     result->src[2] = weights;
     result->src[3] = mask;
 
+    return result;
+}
+
+struct ggml_tensor * ggml_sinkhorn_2x2(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * logits,
+        int                   n_iters) {
+    GGML_ASSERT(logits->type == GGML_TYPE_F32 && ggml_is_matrix(logits));
+    GGML_ASSERT(logits->ne[0] == 4 && logits->nb[0] == sizeof(float));
+    GGML_ASSERT(n_iters > 0);
+
+    struct ggml_tensor * result = ggml_dup_tensor(ctx, logits);
+    result->op = GGML_OP_SINKHORN_2X2;
+    result->src[0] = logits;
+    ggml_set_op_params_i32(result, 0, n_iters);
     return result;
 }
 

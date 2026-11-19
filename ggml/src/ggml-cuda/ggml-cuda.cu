@@ -3051,6 +3051,9 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
         case GGML_OP_DSV4_HC_COMB:
             ggml_cuda_op_dsv4_hc_comb(ctx, dst);
             break;
+        case GGML_OP_SINKHORN_2X2:
+            ggml_cuda_op_sinkhorn_2x2(ctx, dst);
+            break;
         case GGML_OP_DSV4_HC_PRE:
             ggml_cuda_op_dsv4_hc_pre(ctx, dst);
             break;
@@ -6680,6 +6683,9 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
             return true;
         case GGML_OP_GATED_DELTA_NET:
             return true;
+        case GGML_OP_SINKHORN_2X2:
+            return op->src[0]->type == GGML_TYPE_F32 && op->type == GGML_TYPE_F32 &&
+                op->src[0]->nb[0] == sizeof(float) && ggml_is_contiguous(op);
         case GGML_OP_DSV4_HC_COMB:
             return op->src[0]->type == GGML_TYPE_F32 && op->src[1]->type == GGML_TYPE_F32 &&
                 op->src[2]->type == GGML_TYPE_F32 && op->type == GGML_TYPE_F32;

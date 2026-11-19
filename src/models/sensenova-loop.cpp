@@ -121,7 +121,19 @@ llama_model_sensenova_loop::graph::routing llama_model_sensenova_loop::graph::bu
     result.input = ggml_scale(ctx0, result.input, hparams.mhc_pre_scale);
     result.post[0] = ggml_scale(ctx0, ggml_sigmoid(ctx0, row(2)), 2.0f);
     result.post[1] = ggml_scale(ctx0, ggml_sigmoid(ctx0, row(3)), 2.0f);
+    cb(result.input, "mhc_input", il);
     if (!hparams.mhc_fixed_identity) {
+        const auto device = model.dev_layer(il);
+        ggml_tensor * mix_logits = ggml_view_2d(ctx0, logits, 4, a->ne[1], logits->nb[1], 4*logits->nb[0]);
+        ggml_tensor * mix_weights = ggml_sinkhorn_2x2(ctx0, mix_logits, hparams.mhc_iterations);
+        if (device && ggml_backend_dev_type(device) != GGML_BACKEND_DEVICE_TYPE_META &&
+                ggml_backend_dev_supports_op(device, mix_weights)) {
+            for (int i = 0; i < 4; ++i) {
+                result.mix[i] = ggml_view_2d(ctx0, mix_weights, 1, a->ne[1], mix_weights->nb[1], i*mix_weights->nb[0]);
+            }
+            return result;
+        }
+
         for (int i = 0; i < 4; ++i) {
             result.mix[i] = row(4 + i);
         }
@@ -141,7 +153,6 @@ llama_model_sensenova_loop::graph::routing llama_model_sensenova_loop::graph::bu
             mix = ggml_exp(ctx0, mix);
         }
     }
-    cb(result.input, "mhc_input", il);
     return result;
 }
 
