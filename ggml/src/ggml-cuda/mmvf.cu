@@ -888,7 +888,8 @@ bool ggml_cuda_should_use_mmvf(const ggml_tensor * src0, int cc, int warp_size, 
         case GGML_TYPE_F32:
             if (GGML_CUDA_CC_IS_NVIDIA(cc)) {
                 if (ampere_mma_available(cc)) {
-                    return ne11 <= 3;
+                    // Thin FP32 projections can reuse each weight across a four-token verification batch.
+                    return ne11 <= (src0_ne[1] <= 8 ? 4 : 3);
                 }
                 if (cc >= GGML_CUDA_CC_TURING) {
                     return ne11 <= 4;

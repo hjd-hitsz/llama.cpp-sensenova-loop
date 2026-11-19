@@ -1827,6 +1827,17 @@ struct batched_mul_mat_traits<GGML_TYPE_F16> {
     static inline auto convert_nc(ggml_type src_type) { return ggml_get_to_fp16_nc_cuda(src_type); }
 };
 
+static bool ggml_cuda_mul_mat_requires_full_f32(const ggml_tensor * dst) {
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA) && CUDART_VERSION >= 11020
+    return dst->op == GGML_OP_MUL_MAT && ggml_prec_get_acc(dst) == GGML_PREC_F32 &&
+        ggml_prec_get_src(dst, 1) == GGML_PREC_F32 &&
+        dst->src[0]->type == GGML_TYPE_F32 && dst->src[1]->type == GGML_TYPE_F32;
+#else
+    GGML_UNUSED(dst);
+    return false;
+#endif
+}
+
 template<ggml_type compute_type>
 static void ggml_cuda_mul_mat_cublas_impl(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
     using traits = batched_mul_mat_traits<compute_type>;
@@ -1962,7 +1973,13 @@ static void ggml_cuda_mul_mat_cublas_impl(ggml_backend_cuda_context & ctx, const
     // Theoretically cublasGemmStridedBatchedEx would always work, even for a single matrix.
     // However, for some old NVIDIA and AMD GPUs the strided/Ex GEMM is much slower,
     //     probably because the internal kernel selection logic is suboptimal.
-    if (compute_type == GGML_TYPE_F32 && ne12 == 1 && ne13 == 1) {
+    const bool full_f32 = compute_type == GGML_TYPE_F32 && ggml_cuda_mul_mat_requires_full_f32(dst);
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA) && CUDART_VERSION >= 11020
+    if (full_f32) {
+        cu_compute_type = CUBLAS_COMPUTE_32F_PEDANTIC;
+    }
+#endif
+    if (compute_type == GGML_TYPE_F32 && ne12 == 1 && ne13 == 1 && !full_f32) {
         CUBLAS_CHECK(
             cublasSgemm(cublas_h, CUBLAS_OP_T, CUBLAS_OP_N,
                     ne01, ne11, ne10,
@@ -2042,6 +2059,10 @@ static void ggml_cuda_mul_mat_cublas_impl(ggml_backend_cuda_context & ctx, const
 }
 
 static void ggml_cuda_mul_mat_cublas(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
+    if (ggml_cuda_mul_mat_requires_full_f32(dst)) {
+        ggml_cuda_mul_mat_cublas_impl<GGML_TYPE_F32>(ctx, src0, src1, dst);
+        return;
+    }
     const int cc = ggml_cuda_info().devices[ctx.device].cc;
     const ggml_prec prec = ggml_prec_get_acc(dst);
     ggml_type compute_type = src0->type;
@@ -2467,6 +2488,10 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
         // The custom vector kernel can be used over batched cuBLAS GEMM.
         // But this is only faster for GPUs without tensor cores or with a thin src0 matrix (particularly KQV in attention)
         ggml_cuda_mul_mat_vec_f(ctx, src0, src1, nullptr, dst);
+        return;
+    }
+    if (ggml_cuda_mul_mat_requires_full_f32(dst)) {
+        ggml_cuda_mul_mat_cublas_impl<GGML_TYPE_F32>(ctx, src0, src1, dst);
         return;
     }
     // A transposed vector can still use MMVF (i.e. ne01 == 1)
@@ -6274,7 +6299,8 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
                 const bool fp8_id_mmvf = op->op == GGML_OP_MUL_MAT_ID &&
                     a->type == GGML_TYPE_F8_E4M3 && b->type == GGML_TYPE_F32 && op->type == GGML_TYPE_F32 &&
                     ggml_cuda_should_use_mmvf(a, cc_dev, ggml_cuda_info().devices[dev_ctx->device].warp_size, b->ne[2]);
-                if (prec_src1 == GGML_PREC_F32 && !fp8_id_mmvf && (op->op == GGML_OP_MUL_MAT_ID || !f32_src1_ok || a->type != GGML_TYPE_F32)) {
+                if (prec_src1 == GGML_PREC_F32 && !fp8_id_mmvf && !ggml_cuda_mul_mat_requires_full_f32(op) &&
+                        (op->op == GGML_OP_MUL_MAT_ID || !f32_src1_ok || a->type != GGML_TYPE_F32)) {
                     return false;
                 }
                 if (prec_src1 == GGML_PREC_BF16 && (op->op == GGML_OP_MUL_MAT_ID || a->type != GGML_TYPE_F32)) {
